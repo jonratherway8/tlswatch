@@ -10,7 +10,7 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
     timeout-minutes: 8
 
     env:
