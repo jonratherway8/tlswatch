@@ -3,9 +3,9 @@ name: TLS Appointment Checker
 on:
   schedule:
     # Every 12 min, 6am–10pm UTC (= UK winter time). For BST (summer), change to '*/12 5-21 * * 1-5'
-    - cron: '*/12 6-22 * * 1-5'
+    - cron: '*/12 5-21 * * 1-5'
     # Every 15 min, 8am–6pm UTC on weekends. For BST (summer), change to '*/15 7-17 * * 0,6'
-    - cron: '*/15 8-18 * * 0,6'
+    - cron: '*/15 7-17 * * 0,6'
   workflow_dispatch: {}
 
 jobs:
