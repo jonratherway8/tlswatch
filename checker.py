@@ -1,15 +1,18 @@
 import os
 import random
+import shutil
 import smtplib
 import ssl
+import subprocess
 import sys
 import time
 import traceback
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
-from patchright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 # ── Jitter ───────────────────────────────────────────────────────────────────
 jitter = random.randint(0, 180)
@@ -31,32 +34,10 @@ GMAIL_ADDRESS      = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 NOTIFY_EMAIL       = os.environ.get("NOTIFY_EMAIL", "")
 
-# Persistent Chrome profile — survives between runs, preserving cf_clearance
-# and TLScontact login session so we don't re-login every 12 minutes.
 PROFILE_DIR = Path.home() / ".tlswatch-profile"
+CDP_PORT    = 9222
 
 UK_TZ = timezone(timedelta(hours=1))  # BST; change to timedelta(0) in winter
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Machinosh; Intel Mac OS X 13_6_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_7_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-]
-
-VIEWPORTS = [
-    {"width": 1280, "height": 800},
-    {"width": 1440, "height": 900},
-    {"width": 1920, "height": 1080},
-]
 
 NO_SLOT_TEXT = "we currently don't have any appointment slots available"
 
@@ -68,6 +49,11 @@ BLOCK_INDICATORS = [
     "attention required",
     "ddos-guard",
     "enable javascript and cookies",
+]
+
+CHROME_PATHS = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
 ]
 
 
@@ -172,12 +158,26 @@ def page_text(page) -> str:
         return page.content().lower()
 
 
-def is_logged_in(page) -> bool:
-    """Quick check: already on an authenticated page."""
-    url = page.url.lower()
-    return "visas-fr.tlscontact.com" in url and not any(
-        kw in url for kw in ["login", "signin", "/auth"]
-    )
+def find_chrome():
+    for path in CHROME_PATHS:
+        if Path(path).exists():
+            return path
+    for name in ("google-chrome", "chromium-browser", "chromium"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def cdp_ready(port: int, timeout: int = 2) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f"http://localhost:{port}/json/version", timeout=2)
+            return True
+        except Exception:
+            time.sleep(0.5)
+    return False
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -372,47 +372,60 @@ def detect_slots(page) -> str:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run() -> int:
-    ua       = random.choice(USER_AGENTS)
-    viewport = random.choice(VIEWPORTS)
-    print(f"UA: {ua[:70]}")
-    print(f"Viewport: {viewport}")
     print(f"Profile: {PROFILE_DIR}")
     print(f"Appointment URL: {APPT_URL}")
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
+    chrome_bin = find_chrome()
+    chrome_proc = None
+
+    # Launch real Chrome via subprocess — no automation flags, no webdriver flag,
+    # undetectable to Cloudflare. Profile preserves cf_clearance between runs.
+    if not cdp_ready(CDP_PORT, timeout=2):
+        if not chrome_bin:
+            print("Google Chrome not found. Install it at https://www.google.com/chrome/")
+            return 1
+        print(f"Launching Chrome: {chrome_bin}")
+        chrome_proc = subprocess.Popen([
+            chrome_bin,
+            f"--remote-debugging-port={CDP_PORT}",
+            f"--user-data-dir={PROFILE_DIR}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-default-apps",
+        ])
+        if not cdp_ready(CDP_PORT, timeout=20):
+            print("Chrome failed to start within 20s.")
+            chrome_proc.terminate()
+            return 1
+    else:
+        print(f"Reusing Chrome already running on port {CDP_PORT}.")
+
     try:
-        with sync_playwright() as p:
-            # Use real Chrome with persistent profile.
-            # Persistent profile preserves cf_clearance and login session
-            # between runs — no re-login every 12 minutes.
-            try:
-                ctx = p.chromium.launch_persistent_context(
-                    user_data_dir=str(PROFILE_DIR),
-                    headless=False,
-                    slow_mo=random.randint(50, 150),
-                    user_agent=ua,
-                    viewport=viewport,
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(f"http://localhost:{CDP_PORT}")
+
+            if browser.contexts:
+                ctx = browser.contexts[0]
+                page = ctx.new_page()
+            else:
+                ctx = browser.new_context(
                     locale="en-GB",
-                    accept_downloads=False,
                     extra_http_headers={"Accept-Language": "en-GB,en;q=0.9"},
                 )
-            except Exception as exc:
-                print(f"Browser launch failed: {exc}")
-                return 1
+                page = ctx.new_page()
 
-            page = ctx.new_page()
-
-            # Quick probe — is the site reachable?
+            # Landing probe
             try:
                 page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30000)
             except PlaywrightTimeout:
-                print("Site unreachable — blocked.")
+                print("Site unreachable.")
                 notify_blocked()
-                ctx.close()
+                page.close()
                 return 0
 
-            # Wait up to 60s for Cloudflare Turnstile to auto-solve
+            # Wait up to 60s for Cloudflare challenge to auto-solve
             deadline = time.time() + 60
             while is_blocked(page) and time.time() < deadline:
                 print(f"Waiting for CF challenge... Title={page.title()!r}")
@@ -421,25 +434,19 @@ def run() -> int:
             if is_blocked(page):
                 print(f"Blocked on landing after 60s. Title={page.title()!r}")
                 notify_blocked()
-                ctx.close()
+                page.close()
                 return 0
 
-            # Login (skipped automatically if session cookie is still valid)
+            # Login (skipped if session cookie still valid)
             try:
                 login_ok = try_login(page)
             except Exception as exc:
                 print(f"Login exception: {exc}")
                 login_ok = False
 
-            if not login_ok:
-                print(f"Login failed. Blocked={is_blocked(page)}")
+            if not login_ok or is_blocked(page):
                 notify_blocked()
-                ctx.close()
-                return 0
-
-            if is_blocked(page):
-                notify_blocked()
-                ctx.close()
+                page.close()
                 return 0
 
             # Detect slots
@@ -449,7 +456,7 @@ def run() -> int:
                 print(f"Detection exception: {exc}")
                 result = "blocked"
 
-            # Session expired mid-run → re-login once and retry
+            # Session expired mid-run → re-login once
             if result == "session_expired":
                 print("Session expired — re-logging in.")
                 try:
@@ -459,7 +466,7 @@ def run() -> int:
                     print(f"Re-login failed: {exc}")
                     result = "blocked"
 
-            ctx.close()
+            page.close()
 
         ts = uk_now()
         if result == "slots":
@@ -478,6 +485,15 @@ def run() -> int:
         print(f"Unhandled error:\n{tb}")
         notify_error(tb)
         return 1
+
+    finally:
+        if chrome_proc:
+            print("Terminating Chrome.")
+            chrome_proc.terminate()
+            try:
+                chrome_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                chrome_proc.kill()
 
 
 if __name__ == "__main__":
