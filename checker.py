@@ -9,8 +9,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
-from playwright_stealth import Stealth
+from patchright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 # ── Jitter ───────────────────────────────────────────────────────────────────
 jitter = random.randint(0, 180)
@@ -390,15 +389,8 @@ def run() -> int:
             try:
                 ctx = p.chromium.launch_persistent_context(
                     user_data_dir=str(PROFILE_DIR),
-                    channel="chrome",
                     headless=False,
                     slow_mo=random.randint(50, 150),
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--exclude-switches=enable-automation",
-                        "--disable-infobars",
-                    ],
-                    ignore_default_args=["--enable-automation"],
                     user_agent=ua,
                     viewport=viewport,
                     locale="en-GB",
@@ -406,30 +398,8 @@ def run() -> int:
                     extra_http_headers={"Accept-Language": "en-GB,en;q=0.9"},
                 )
             except Exception as exc:
-                # Chrome not installed — fall back to Playwright's Chromium
-                print(f"Chrome not available ({exc}), falling back to Chromium.")
-                ctx = p.chromium.launch_persistent_context(
-                    user_data_dir=str(PROFILE_DIR),
-                    headless=False,
-                    slow_mo=random.randint(50, 150),
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--exclude-switches=enable-automation",
-                        "--disable-infobars",
-                    ],
-                    ignore_default_args=["--enable-automation"],
-                    user_agent=ua,
-                    viewport=viewport,
-                    locale="en-GB",
-                    accept_downloads=False,
-                    extra_http_headers={"Accept-Language": "en-GB,en;q=0.9"},
-                )
-
-            # Apply stealth patches to the persistent context
-            try:
-                Stealth().apply_stealth_sync(ctx)
-            except Exception as exc:
-                print(f"Stealth patch warning: {exc}")
+                print(f"Browser launch failed: {exc}")
+                return 1
 
             page = ctx.new_page()
 
