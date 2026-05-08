@@ -384,7 +384,7 @@ def run() -> int:
                 ctx = p.chromium.launch_persistent_context(
                     user_data_dir=str(PROFILE_DIR),
                     channel="chrome",
-                    headless=True,
+                    headless=False,
                     slow_mo=random.randint(50, 150),
                     args=["--disable-blink-features=AutomationControlled"],
                     user_agent=ua,
@@ -398,7 +398,7 @@ def run() -> int:
                 print(f"Chrome not available ({exc}), falling back to Chromium.")
                 ctx = p.chromium.launch_persistent_context(
                     user_data_dir=str(PROFILE_DIR),
-                    headless=True,
+                    headless=False,
                     slow_mo=random.randint(50, 150),
                     args=["--disable-blink-features=AutomationControlled"],
                     user_agent=ua,
