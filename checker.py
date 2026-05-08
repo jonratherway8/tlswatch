@@ -303,18 +303,37 @@ def try_login(page) -> bool:
             print(f"Submit fallback failed: {exc}")
             return False
 
-    human_delay(3, 6)
+    human_delay(2, 4)
     try:
-        page.wait_for_load_state("domcontentloaded", timeout=20000)
+        page.wait_for_load_state("domcontentloaded", timeout=30000)
     except PlaywrightTimeout:
         pass
 
-    if any(kw in page.url.lower() for kw in ["login", "signin", "/auth", "connexion"]):
-        print(f"Still on auth page after submit: {page.url}")
-        return False
+    # i2-auth.visas-fr.tlscontact.com (Keycloak) has its own CF protection —
+    # wait for it to auto-solve before checking the outcome.
+    deadline = time.time() + 60
+    while is_blocked(page) and time.time() < deadline:
+        print(f"Waiting for CF challenge after submit... Title={page.title()!r}")
+        time.sleep(3)
 
-    print(f"Login OK. URL: {page.url}")
-    return True
+    # Give the OAuth redirect chain (auth-callback → dashboard) time to settle.
+    human_delay(3, 5)
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except PlaywrightTimeout:
+        pass
+
+    final_url = page.url.lower()
+    print(f"Post-submit URL: {page.url}")
+
+    # Success: landed back on the main domain (not the auth server).
+    if "visas-fr.tlscontact.com" in final_url and "i2-auth" not in final_url:
+        if not any(kw in final_url for kw in ["login", "signin", "connexion"]):
+            print(f"Login OK. URL: {page.url}")
+            return True
+
+    print(f"Login failed. URL={page.url!r}")
+    return False
 
 
 # ── Slot detection ────────────────────────────────────────────────────────────
