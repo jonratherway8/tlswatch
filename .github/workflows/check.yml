@@ -34,8 +34,8 @@ jobs:
       - name: Install dependencies
         run: pip3 install -r requirements.txt
 
-      - name: Install Playwright browsers
-        run: python3 -m playwright install chromium
+      - name: Install Patchright browser
+        run: python3 -m patchright install chromium
 
       - name: Run checker
         run: python3 checker.py
