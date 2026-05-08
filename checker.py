@@ -187,14 +187,21 @@ def try_login(page) -> bool:
     print(f"Navigating to login: {LOGIN_URL}")
     try:
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-        human_delay(2, 4)
     except PlaywrightTimeout:
         print("Login page timeout.")
         return False
 
+    # Wait up to 60s for any Cloudflare challenge on the login page
+    deadline = time.time() + 60
+    while is_blocked(page) and time.time() < deadline:
+        print(f"Waiting for CF challenge on login... Title={page.title()!r}")
+        time.sleep(3)
+
     if is_blocked(page):
-        print(f"Blocked on login page. Title={page.title()!r}")
+        print(f"Blocked on login page after 60s. Title={page.title()!r}")
         return False
+
+    human_delay(1, 2)
 
     # If already redirected away from login, session is still alive
     if not any(kw in page.url.lower() for kw in ["login", "signin", "/auth"]):
@@ -419,15 +426,20 @@ def run() -> int:
             # Quick probe — is the site reachable?
             try:
                 page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30000)
-                human_delay(1, 3)
             except PlaywrightTimeout:
                 print("Site unreachable — blocked.")
                 notify_blocked()
                 ctx.close()
                 return 0
 
+            # Wait up to 60s for Cloudflare Turnstile to auto-solve
+            deadline = time.time() + 60
+            while is_blocked(page) and time.time() < deadline:
+                print(f"Waiting for CF challenge... Title={page.title()!r}")
+                time.sleep(3)
+
             if is_blocked(page):
-                print(f"Blocked on landing. Title={page.title()!r}")
+                print(f"Blocked on landing after 60s. Title={page.title()!r}")
                 notify_blocked()
                 ctx.close()
                 return 0
