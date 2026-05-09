@@ -8,8 +8,8 @@
 
 - A computer with internet access and a web browser
 - Your TLScontact account email and password
-- A Gmail account (or access to create one — it's free)
 - The Telegram app installed on your iPhone
+- A personal Gmail account *(optional — only needed for backup email alerts)*
 
 This will take about 30–45 minutes to set up. Once done, it runs automatically 24/7.
 
@@ -139,11 +139,16 @@ If you see `{"ok":true,"result":[]}` (empty result), go back to Telegram, send a
 
 ---
 
-## Part 5: Create a Gmail App Password
+## Part 5: Create a Gmail App Password *(optional — skip if you only want Telegram alerts)*
+
+Email is a backup notification. **Telegram alone is sufficient** — if you prefer not to set up email, skip this entire part and go straight to Part 6. Leave the three email secrets (`GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `NOTIFY_EMAIL`) blank when you reach Part 6.
+
+> **"The setting you are looking for is not available for your account"?**
+> This means your Google account is a work, school, or organisation account (Google Workspace) — App Passwords are disabled by the admin. You have two options: skip email entirely (recommended), or create a free personal Gmail account at https://gmail.com and use that instead.
 
 For security, Gmail requires a special "App Password" for automated scripts — not your real Gmail password.
 
-**Step 27.** Go to **https://myaccount.google.com** and log in with the Gmail account you want to use for sending alerts.
+**Step 27.** Go to **https://myaccount.google.com** and log in with a **personal** Gmail account (not a work or school one).
 
 **Step 28.** Click on **"Security"** in the left sidebar.
 
@@ -187,12 +192,12 @@ You need to add **7 secrets**, one at a time. For each one:
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | The bot token from Step 22 (looks like `1234567890:ABCdef...`) |
 | `TELEGRAM_CHAT_ID` | The chat ID number from Step 26 (looks like `987654321`) |
-| `GMAIL_ADDRESS` | Your full Gmail address (e.g. `yourname@gmail.com`) |
-| `GMAIL_APP_PASSWORD` | The 16-character App Password from Step 32 (no spaces needed) |
+| `GMAIL_ADDRESS` | *(optional)* Your personal Gmail address (e.g. `yourname@gmail.com`) |
+| `GMAIL_APP_PASSWORD` | *(optional)* The 16-character App Password from Step 32 (no spaces needed) |
 | `TLS_EMAIL` | Your TLScontact account email address |
 | `TLS_PASSWORD` | Your TLScontact account password |
 | `TLS_ORDER_ID` | Your TLScontact order/application ID — see note below |
-| `NOTIFY_EMAIL` | The email address where you want to receive alerts (can be the same as `GMAIL_ADDRESS`) |
+| `NOTIFY_EMAIL` | *(optional)* Email address to receive alerts (can be same as `GMAIL_ADDRESS`) |
 
 After adding all 8, you should see 8 secrets listed on the page.
 
@@ -295,10 +300,115 @@ After the first manual test, the monitor will run automatically. You don't need 
 
 ---
 
+## Part 11: Make the Monitor More Reliable — Run on Your Mac *(optional but recommended)*
+
+By default, checks run on GitHub's cloud servers. Those servers use well-known IP addresses that TLScontact's security system (Cloudflare) often blocks, causing the "TLSWatch blocked" Telegram message. This does not mean the monitor is broken — it retries automatically — but it does reduce how often a check successfully reaches the appointment page.
+
+**The fix:** tell GitHub to run the checks on your Mac instead. Your Mac has a home internet connection with a normal residential IP address that Cloudflare does not flag. This is called a **self-hosted runner**. It is a small background app that sits quietly on your Mac and picks up jobs from GitHub whenever a check is scheduled.
+
+**Requirement:** your Mac must be on (not shut down) for checks to run. Sleep/screen-off is fine — the runner wakes automatically when a job arrives.
+
+---
+
+### Step A: Register your Mac as a runner
+
+**Step 48.** Go to your `tlswatch` repository on GitHub.
+
+**Step 49.** Click **"Settings"** → in the left sidebar scroll down to **"Actions"** → click **"Runners"**.
+
+**Step 50.** Click the green **"New self-hosted runner"** button.
+
+**Step 51.** Under "Runner image", select **macOS**. Under "Architecture", select:
+- **ARM64** if your Mac has an M1, M2, M3, or M4 chip (most Macs bought after 2020)
+- **X64** if your Mac has an Intel chip (most Macs bought before 2020)
+
+If you're unsure: click the Apple menu (top-left) → "About This Mac". If it says "Apple M..." it's ARM64. If it says "Intel" it's X64.
+
+**Step 52.** GitHub will show you three groups of Terminal commands. Leave this page open — you'll need those commands in the next steps.
+
+---
+
+### Step B: Install the runner on your Mac
+
+**Step 53.** Open the **Terminal** app on your Mac. You can find it by pressing Cmd+Space and typing "Terminal", then pressing Enter.
+
+**Step 54.** Copy and run the commands from **"Download"** section on the GitHub page one at a time. They will look something like:
+```
+mkdir actions-runner && cd actions-runner
+curl -o actions-runner-osx-arm64-2.x.x.tar.gz -L https://github.com/...
+tar xzf ./actions-runner-osx-arm64-2.x.x.tar.gz
+```
+Paste each line into Terminal and press Enter. Wait for each to finish before pasting the next.
+
+**Step 55.** Now run the command from the **"Configure"** section. It looks like:
+```
+./config.sh --url https://github.com/YOUR-USERNAME/tlswatch --token XXXXXXXXXX
+```
+(The token is unique to you and already filled in on the GitHub page — just copy it.)
+
+**Step 56.** Terminal will ask you a few questions:
+- **Enter the name of the runner group:** just press Enter (accepts default)
+- **Enter the name for this runner:** type something like `my-mac` and press Enter
+- **Enter any additional labels:** just press Enter
+- **Enter name of work folder:** just press Enter
+
+**Step 57.** Now install the runner as a background service so it starts automatically when you log in. Run these two commands:
+```
+./svc.sh install
+./svc.sh start
+```
+
+The runner is now running in the background. You can close Terminal.
+
+---
+
+### Step C: Update the workflow file to use your Mac
+
+You need to make one small edit to `check.yml` so GitHub sends jobs to your Mac instead of its own servers.
+
+**Step 58.** In your GitHub repository, click on `.github` → `workflows` → `check.yml`.
+
+**Step 59.** Click the pencil (Edit) icon in the top right.
+
+**Step 60.** Find this line:
+```
+    runs-on: ubuntu-22.04
+```
+
+Change it to:
+```
+    runs-on: self-hosted
+```
+
+**Step 61.** Click **"Commit changes"**, then **"Commit changes"** again in the popup.
+
+---
+
+### Step D: Verify it's working
+
+**Step 62.** Go to the **Actions** tab in your repository and click **"Run workflow"** → **"Run workflow"** to trigger a manual test.
+
+**Step 63.** Click on the running job. You should see it say **"Running on: my-mac"** (or whatever name you chose in Step 56) instead of "ubuntu-22.04". This confirms the job is running on your Mac.
+
+The checks should now get through Cloudflare much more reliably. You will see far fewer "TLSWatch blocked" Telegram messages.
+
+---
+
+### If you want to stop or uninstall the runner later
+
+Open Terminal and run:
+```
+cd actions-runner
+./svc.sh stop
+./svc.sh uninstall
+```
+
+---
+
 ## Frequently Asked Questions
 
 **Q: Will this actually work given Cloudflare blocks it?**
-TLScontact uses Cloudflare for protection, and automated browsers are often challenged. The script is designed to detect this and retry automatically on the next run. GitHub Actions uses a large pool of IP addresses that rotate between runs — some will pass Cloudflare's checks and some won't. The monitor will catch a slot as long as it gets a clean run around the time one appears. If you see the "blocked" Telegram message frequently, that is normal and expected — it just means that particular run was challenged; the next one will try again.
+With the default setup (GitHub's servers), checks are frequently blocked because those servers use known datacenter IP addresses. You will receive "TLSWatch blocked" Telegram messages often — this is normal and the monitor retries automatically. For significantly better reliability, follow Part 11 to run the checks on your own Mac instead. Your home internet connection is not flagged by Cloudflare, so almost every check will get through.
 
 **Q: How do I turn off the monitor?**
 Go to the Actions tab, click "TLS Appointment Checker", then click the "..." menu near the top right and choose "Disable workflow". Re-enable it the same way.
@@ -306,8 +416,17 @@ Go to the Actions tab, click "TLS Appointment Checker", then click the "..." men
 **Q: I got the slot notification — what do I do?**
 Click the link in the Telegram message immediately. It takes you to the TLScontact booking page. You will still need to log in and complete the booking manually.
 
+**Q: Gmail App Passwords says "The setting you are looking for is not available for your account."**
+Your account is a work, school, or organisation Google account — App Passwords are disabled by the admin. Skip email entirely: just don't add the three email secrets (`GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `NOTIFY_EMAIL`). Telegram notifications will still work perfectly.
+
 **Q: My Gmail App Password doesn't work.**
-Make sure 2-Step Verification is enabled on your Google account (Step 29) — App Passwords don't work without it. Also make sure you didn't include spaces when pasting the App Password.
+Make sure you are using a personal Gmail account (not a work/school one), and that 2-Step Verification is enabled (Step 29). Also make sure you didn't include spaces when pasting the App Password.
 
 **Q: The Actions run is failing with a Python error.**
-Check that all 7 secrets are entered correctly (Settings → Secrets and variables → Actions). The secret names must be spelled exactly as shown in the table in Step 36.
+Check that all 8 secrets are entered correctly (Settings → Secrets and variables → Actions). The secret names must be spelled exactly as shown in the table in Step 36.
+
+**Q: The runner says "offline" or jobs are queued but not running.**
+Your Mac may be asleep or shut down, or the runner service may have stopped. Open Terminal and run `cd actions-runner && ./svc.sh start` to restart it. To check the runner status on GitHub: Settings → Actions → Runners — it should show a green dot next to your runner name.
+
+**Q: Can I run the monitor on my Mac without it being a self-hosted runner?**
+Yes — but it requires leaving Terminal open and running `python3 checker.py` manually each time, which is not practical. The self-hosted runner approach from Part 11 is the right way to do this automatically.
